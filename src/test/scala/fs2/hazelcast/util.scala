@@ -15,7 +15,7 @@ class Suites1[A](a: => A)(suites: (A => Suite)*)(shutdown: A => Unit) extends Su
 
 
 object TestUtils {
-  implicit val S: Strategy = Strategy.fromFixedDaemonPool(1)
+  implicit val S: Strategy = Strategy.fromFixedDaemonPool(Runtime.getRuntime.availableProcessors)
 }
 
 import com.hazelcast.{core => hz}

@@ -11,9 +11,12 @@ import TestUtils._
 
 import cats.implicits._
 
+import fs2._
+import scala.concurrent.duration._
+
+@SerialVersionUID(20170704)
 final class DistMapSpec(@transient hazelcast: hz.HazelcastInstance) extends FlatSpec with Matchers with Serializable with BeforeAndAfterEach {
 
-  val serialVersionUID = -7720764477152944955L
   @transient var map: DistMap[Task, Int, String] = _
 
   override def beforeEach(): Unit = {
@@ -113,6 +116,13 @@ final class DistMapSpec(@transient hazelcast: hz.HazelcastInstance) extends Flat
       sum <- map.fold
     } yield sum
     r.unsafeRun should be(100)
+    map.removeAll.unsafeRun
+  }
+
+  it should "listen to updates" in {
+    val update = fs2.time.every(300 milliseconds).flatMap(_ => Stream.eval(map.put(1, "foo")))
+    val r = update.mergeDrainL(map.listen).take(1).runLog
+    r.unsafeRun.size should be(1)
   }
 }
 
