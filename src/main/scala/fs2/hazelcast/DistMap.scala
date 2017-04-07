@@ -102,6 +102,8 @@ object DistMap {
     }
 
   def apply[F[_] : Async, K, V](map: hz.IMap[K, V]): DistMap[F, K, V] = new DistMap[F, K, V] {
+
+    def containsKey(k: K): F[Boolean] = DistMap.containsKey(k).apply(map)
     def get(k: K): F[Option[V]] = DistMap.get(k).apply(map)
     def put(k: K, v: V): F[Unit] = DistMap.put(k, v).apply(map)
     def putAll(vs: Map[K, V]): F[Unit] = DistMap.putAll(vs).apply(map)
@@ -112,13 +114,18 @@ object DistMap {
     def mapReduce[B](b: B)(f: (K, V) => B, g: (B, B) => B): F[B] = DistMap.mapReduce(b, f, g).apply(map)
     def project[B](f: (K, V) => B): F[Seq[B]] = DistMap.project(f).apply(map)
     def collect[B](pf: PartialFunction[(K, V), B]): F[Seq[B]] = DistMap.collect(pf).apply(map)
+    def findKeys(f: (K, V) => Boolean): F[Set[K]] = DistMap.findKeys(f).apply(map)
     def removeAll: F[Unit] = DistMap.removeAll.apply(map)
+
+    override def toString: String = s"${map.getName}(${map.getServiceName}, ${map.getLocalMapStats})"
   }
 }
 
 import cats._
 
 trait DistMap[F[_], K, V] extends Serializable {
+
+  def containsKey(k: K): F[Boolean]
   def get(k: K): F[Option[V]]
   def put(k: K, v: V): F[Unit]
   def putAll(vs: Map[K, V]): F[Unit]
@@ -129,6 +136,7 @@ trait DistMap[F[_], K, V] extends Serializable {
   def mapReduce[B](b: B)(f: (K, V) => B, g: (B, B) => B): F[B]
   def project[B](f: (K, V) => B): F[Seq[B]]
   def collect[B](pf: PartialFunction[(K, V), B]): F[Seq[B]]
+  def findKeys(f: (K, V) => Boolean): F[Set[K]]
   def removeAll: F[Unit]
 
   def fold(implicit M: Monoid[V]): F[V] = mapReduce(M.empty)((_, v) => v, M.combine)

@@ -32,6 +32,22 @@ final class DistMapSpec(@transient hazelcast: hz.HazelcastInstance) extends Flat
     r.unsafeRun should be(Some("foo"))
   }
 
+  it should "check whether a key exists" in {
+    val r = for {
+      _ <- map.put(1, "foo")
+      result <- map.containsKey(1)
+    } yield result
+    r.unsafeRun should be(true)
+  }
+
+  it should "find keys" in {
+    val r = for {
+      _ <- map.putAll(Map(1 -> "foo", 2 -> "bar"))
+      result <- map.findKeys((i, _) => i < 2)
+    } yield result
+    r.unsafeRun should contain (1)
+  }
+
   it should "get a null value as a None" in {
     val r = for {
       a <- map.get(1)
