@@ -1,0 +1,19 @@
+language: scala
+
+sudo: required
+
+dist: trusty
+
+git:
+  depth: 9999
+
+matrix:
+  include:
+  - scala: 2.12.1
+    jdk: oraclejdk8
+    
+script:
+  - sbt clean compile coverage test coverageReport
+
+after_success:
+- bash <(curl -s https://codecov.io/bash)

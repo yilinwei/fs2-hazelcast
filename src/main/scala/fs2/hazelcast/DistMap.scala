@@ -50,14 +50,13 @@ object DistMap {
 
   def modifyLocal[F[_], K, V](k: K, f: V => V)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Unit] =
     ReaderT[F, hz.IMap[K, V], Unit] { map =>
-      Stream.bracket[F, Unit, Unit](lock(k).apply(map))(_ => {
+      Stream.bracket[F, Unit, Unit](lock(k).apply(map))(_ =>
         Stream.eval {
           for {
             v <- get(k).apply(map)
             _ <- if(v.isDefined) put(k, f(v.get)).apply(map) else F.fail(new IllegalArgumentException(s"cannot modify non-existent value with key $k"))
           } yield ()
-        }
-      },
+        },
         _ => unlock(k).apply(map)
       ).run
     }
