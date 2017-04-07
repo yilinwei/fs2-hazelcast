@@ -3,6 +3,9 @@ package hazelcast
 
 import com.hazelcast.{core => hz}
 import com.hazelcast.map._
+import com.hazelcast.aggregation._
+import com.hazelcast.projection._
+import com.hazelcast.query._
 
 import fs2._
 import fs2.util._
@@ -50,12 +53,28 @@ private[hazelcast] final class ReadProcessor[K, V, A](f: (K, V) => A) extends En
 
   import java.util.Map
 
-  def process(entry: Map.Entry[K, V]): AnyRef = {
+  def process(entry: Map.Entry[K, V]): AnyRef = 
     f(entry.getKey, entry.getValue).asInstanceOf[AnyRef]
-  }
 
   val getBackupProcessor = null
 }
 
+private[hazelcast] final class MapReduce[A, B](b: B, f: A => B, g: (B, B) => B) extends Aggregator[A, B] {
 
+  var current: B = b
 
+  def accumulate(a: A): Unit = current = g(f(a), current)
+  def combine(that: Aggregator[_, _]): Unit = current = g(current, that.asInstanceOf[MapReduce[A, B]].current)
+  def aggregate: B = current
+}
+
+private[hazelcast] final class EntryPredicate[K, V](f: (K, V) => Boolean) extends Predicate[K, V] {
+
+  import java.util.Map
+
+  def apply(entry: Map.Entry[K, V]): Boolean = f(entry.getKey, entry.getValue)
+}
+
+private[hazelcast] final class ProjectionFunction[A, B](f: A => B) extends Projection[A, B] {
+  def transform(a: A): B = f(a)
+}

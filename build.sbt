@@ -32,7 +32,7 @@ lazy val commonSettings = Seq(
   libraryDependencies ++= Seq(
     "org.typelevel" %% "cats-core" % catsVersion,
     "org.typelevel" %% "cats-free" % catsVersion,
-    "com.hazelcast" % "hazelcast" % "3.7.6",
+    "com.hazelcast" % "hazelcast" % "3.8",
     "co.fs2" %% "fs2-core" % "0.9.4",
 
     "org.scalatest" %% "scalatest" % "3.0.1" % "test",
