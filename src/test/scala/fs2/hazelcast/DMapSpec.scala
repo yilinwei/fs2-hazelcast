@@ -15,19 +15,19 @@ import fs2._
 import scala.concurrent.duration._
 
 @SerialVersionUID(20170704)
-final class DistMapSpec(@transient hazelcast: hz.HazelcastInstance) extends FlatSpec with Matchers with Serializable with BeforeAndAfterEach {
+final class DMapSpec(@transient hazelcast: hz.HazelcastInstance) extends FlatSpec with Matchers with Serializable with BeforeAndAfterEach {
 
-  @transient var map: DistMap[Task, Int, String] = _
+  @transient var map: DMap[Task, Int, String] = _
 
   override def beforeEach(): Unit = {
-    map = DistMap[Task, Int, String](hazelcast.getMap("foo"))
+    map = DMap[Task, Int, String](hazelcast.getMap("foo"))
   }
 
   override def afterEach(): Unit = {
     map.removeAll.unsafeRun
   }
 
-  "A DistMap" should "put and get values" in {
+  "A DMap" should "put and get values" in {
     val r = for {
       _ <- map.put(1, "foo")
       a <- map.get(1)
@@ -109,7 +109,7 @@ final class DistMapSpec(@transient hazelcast: hz.HazelcastInstance) extends Flat
   }
 
   it should "fold an existing value" in {
-    val map = DistMap[Task, Int, Int](hazelcast.getMap("bar"))
+    val map = DMap[Task, Int, Int](hazelcast.getMap("bar"))
     val r = for {
       _ <- map.put(0, 90)
       _ <- map.put(1, 10)
@@ -119,10 +119,42 @@ final class DistMapSpec(@transient hazelcast: hz.HazelcastInstance) extends Flat
     map.removeAll.unsafeRun
   }
 
-  it should "listen to updates" in {
+  it should "listen to kv updates" in {
     val update = fs2.time.every(300 milliseconds).flatMap(_ => Stream.eval(map.put(1, "foo")))
     val r = update.mergeDrainL(map.listen).take(1).runLog
-    r.unsafeRun.size should be(1)
+    r.unsafeRun should be(Vector(DMapKVEvent.Update(1, "foo", "foo")))
+  }
+
+  it should "listen to kv adds" in {
+    val add = fs2.time.sleep[Task](300 milliseconds).flatMap(_ => Stream.eval(map.put(1, "foo")))
+    val r = add.mergeDrainL(map.listen).take(1).runLog
+    r.unsafeRun should be(Vector(DMapKVEvent.Add(1, "foo")))
+  }
+
+  it should "listen to kv removes" in {
+    map.put(0, "foo").unsafeRun
+    val remove = fs2.time.sleep[Task](300 milliseconds).flatMap(_ => Stream.eval(map.remove(0)))
+    val r = remove.mergeDrainL(map.listen).take(1).runLog
+    r.unsafeRun should be(Vector(DMapKVEvent.Remove(0, "foo")))
+  }
+
+  it should "listen to k updates" in {
+    val update = fs2.time.every(300 milliseconds).flatMap(_ => Stream.eval(map.put(1, "bar")))
+    val r = update.mergeDrainL(map.listenKeys).take(1).runLog
+    r.unsafeRun should be(Vector(DMapKEvent.Update(1)))
+  }
+
+  it should "listen to k adds" in {
+    val add = fs2.time.sleep[Task](300 milliseconds).flatMap(_ => Stream.eval(map.put(1, "foo")))
+    val r = add.mergeDrainL(map.listenKeys).take(1).runLog
+    r.unsafeRun should be(Vector(DMapKEvent.Add(1)))
+  }
+
+  it should "listen to k removes" in {
+    map.put(0, "foo").unsafeRun
+    val remove = fs2.time.sleep[Task](300 milliseconds).flatMap(_ => Stream.eval(map.remove(0)))
+    val r = remove.mergeDrainL(map.listenKeys).take(1).runLog
+    r.unsafeRun should be(Vector(DMapKEvent.Remove(0)))
   }
 }
 

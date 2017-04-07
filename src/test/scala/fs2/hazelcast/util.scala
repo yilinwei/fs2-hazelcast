@@ -16,10 +16,11 @@ class Suites1[A](a: => A)(suites: (A => Suite)*)(shutdown: A => Unit) extends Su
 
 object TestUtils {
   implicit val S: Strategy = Strategy.fromFixedDaemonPool(Runtime.getRuntime.availableProcessors)
+  implicit val scheduler: Scheduler = Scheduler.fromFixedDaemonPool(1)
 }
 
 import com.hazelcast.{core => hz}
 
 final class HazelcastNodeSpec extends Suites1(hz.Hazelcast.newHazelcastInstance())(
-  new DistMapSpec(_)
+  new DMapSpec(_)
 )(_.shutdown())

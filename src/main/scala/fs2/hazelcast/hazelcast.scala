@@ -92,24 +92,57 @@ private[hazelcast] final class EntryKVHandler[K, V](cb: DMapKVEvent[K, V] => Uni
 {
 
 
-  override def entryAdded(entry: hz.EntryEvent[K, V]): Unit = 
+  def entryAdded(entry: hz.EntryEvent[K, V]): Unit = 
     cb(DMapKVEvent.Add(entry.getKey, entry.getValue))
 
-  override def entryRemoved(entry: hz.EntryEvent[K, V]): Unit =
+  def entryRemoved(entry: hz.EntryEvent[K, V]): Unit =
     cb(DMapKVEvent.Remove(entry.getKey, entry.getOldValue))
 
-  override def entryUpdated(entry: hz.EntryEvent[K, V]): Unit =
+  def entryUpdated(entry: hz.EntryEvent[K, V]): Unit =
     cb(DMapKVEvent.Update(entry.getKey, entry.getOldValue, entry.getValue))
 
   def entryMerged(entry: hz.EntryEvent[K, V]): Unit =
     cb(DMapKVEvent.Merged(entry.getKey, entry.getOldValue, entry.getMergingValue, entry.getValue))
 
-  override def entryEvicted(entry: hz.EntryEvent[K, V]): Unit =
+  def entryEvicted(entry: hz.EntryEvent[K, V]): Unit =
     cb(DMapKVEvent.Evict(entry.getKey, entry.getValue))
 
-  override def mapCleared(event: hz.MapEvent): Unit =
+  def mapCleared(event: hz.MapEvent): Unit =
     cb(DMapKVEvent.Cleared(event.getNumberOfEntriesAffected))
 
-  override def mapEvicted(event: hz.MapEvent): Unit =
+  def mapEvicted(event: hz.MapEvent): Unit =
     cb(DMapKVEvent.Evicted(event.getNumberOfEntriesAffected))
+}
+
+private[hazelcast] final class EntryKHandler[K, V](cb: DMapKEvent[K] => Unit)
+    extends MapListener
+    with MapClearedListener
+    with MapEvictedListener
+    with EntryAddedListener[K, V]
+    with EntryEvictedListener[K, V]
+    with EntryRemovedListener[K, V]
+    with EntryMergedListener[K, V]
+    with EntryUpdatedListener[K, V]
+{
+
+  def entryAdded(entry: hz.EntryEvent[K, V]): Unit = 
+    cb(DMapKEvent.Add(entry.getKey))
+
+  def entryRemoved(entry: hz.EntryEvent[K, V]): Unit =
+    cb(DMapKEvent.Remove(entry.getKey))
+
+  def entryUpdated(entry: hz.EntryEvent[K, V]): Unit =
+    cb(DMapKEvent.Update(entry.getKey))
+
+  def entryMerged(entry: hz.EntryEvent[K, V]): Unit =
+    cb(DMapKEvent.Merged(entry.getKey))
+
+  def entryEvicted(entry: hz.EntryEvent[K, V]): Unit =
+    cb(DMapKEvent.Evict(entry.getKey))
+
+  def mapCleared(event: hz.MapEvent): Unit =
+    cb(DMapKEvent.Cleared(event.getNumberOfEntriesAffected))
+
+  def mapEvicted(event: hz.MapEvent): Unit =
+    cb(DMapKEvent.Evicted(event.getNumberOfEntriesAffected))
 }

@@ -7,11 +7,12 @@ import fs2.util.syntax._
 import cats.data._
 
 import com.hazelcast.{core => hz}
+import com.hazelcast.map.listener._
 import scala.collection.JavaConverters._
 
 import Hazelcast._
 
-object DistMap {
+object DMap {
 
   def containsKey[F[_], K, V](k: K)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Boolean] =
     ReaderT { map =>
@@ -32,6 +33,9 @@ object DistMap {
 
   def delete[F[_], K, V](k: K)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Unit] =
     ReaderT { map => F.delay(map.delete(k)) }
+
+  def remove[F[_], K, V](k: K)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Unit] =
+    ReaderT { map => F.delay(map.remove(k)) }
 
   def get[F[_] : Async, K, V](k: K): ReaderT[F, hz.IMap[K, V], Option[V]] =
     ReaderT { map => run(map.getAsync(k)).map(Option(_)) }
@@ -106,36 +110,43 @@ object DistMap {
       F.delay { map.destroy() }
     }
 
-
-  def listen[F[_], K, V](implicit F: Async[F]): ReaderT[Stream[F, ?], hz.IMap[K, V], DMapKVEvent[K, V]] =
+  def _listen[F[_], K, V, E](handler: async.mutable.Queue[F, E] => MapListener, includeValues: Boolean)(implicit F: Async[F]): ReaderT[Stream[F, ?], hz.IMap[K, V], E] =
     ReaderT { map =>
       for {
-        queue <- Stream.eval(async.unboundedQueue[F, DMapKVEvent[K, V]])
-        values <- Stream.bracket[F, String, DMapKVEvent[K, V]](
+        queue <- Stream.eval(async.unboundedQueue[F, E])
+        values <- Stream.bracket[F, String, E](
           F.delay {
-            map.addEntryListener(new EntryKVHandler[K, V](event => queue.enqueue1(event).unsafeRunAsync(_ => ())), true)
+            map.addEntryListener(handler(queue), includeValues)
           }
         )(_ => queue.dequeue, id => F.delay(map.removeEntryListener(id)).map(_ => ()))
       } yield values
     }
 
-  def apply[F[_] : Async, K, V](map: hz.IMap[K, V]): DistMap[F, K, V] = new DistMap[F, K, V] {
+  def listen[F[_], K, V](implicit F: Async[F]): ReaderT[Stream[F, ?], hz.IMap[K, V], DMapKVEvent[K, V]] =
+    _listen(queue => new EntryKVHandler[K, V](event => queue.enqueue1(event).unsafeRunAsync(_ => ())), true)
 
-    def containsKey(k: K): F[Boolean] = DistMap.containsKey(k).apply(map)
-    def get(k: K): F[Option[V]] = DistMap.get(k).apply(map)
-    def put(k: K, v: V): F[Unit] = DistMap.put(k, v).apply(map)
-    def putAll(vs: Map[K, V]): F[Unit] = DistMap.putAll(vs).apply(map)
-    def modifyLocal(k: K, f: V => V): F[Unit] = DistMap.modifyLocal(k, f).apply(map)
-    def modify(k: K, f: V => V): F[Unit] = DistMap.modify(k, f).apply(map)
-    def reader[A](k: K, f: V => A) = DistMap.reader(k, f).apply(map)
-    def readerLocal[A](k: K, f: V => A): F[A] = DistMap.readerLocal(k, f).apply(map)
-    def mapReduce[B](b: B)(f: (K, V) => B, g: (B, B) => B): F[B] = DistMap.mapReduce(b, f, g).apply(map)
-    def project[B](f: (K, V) => B): F[Seq[B]] = DistMap.project(f).apply(map)
-    def collect[B](pf: PartialFunction[(K, V), B]): F[Seq[B]] = DistMap.collect(pf).apply(map)
-    def findKeys(f: (K, V) => Boolean): F[Set[K]] = DistMap.findKeys(f).apply(map)
-    def removeAll: F[Unit] = DistMap.removeAll.apply(map)
+  def listenKeys[F[_], K, V](implicit F: Async[F]): ReaderT[Stream[F, ?], hz.IMap[K, V], DMapKEvent[K]] =
+    _listen(queue => new EntryKHandler[K, V](event => queue.enqueue1(event).unsafeRunAsync(_ => ())), false)
 
-    def listen: Stream[F, DMapKVEvent[K, V]] = DistMap.listen.apply(map)
+  def apply[F[_] : Async, K, V](map: hz.IMap[K, V]): DMap[F, K, V] = new DMap[F, K, V] {
+
+    def containsKey(k: K): F[Boolean] = DMap.containsKey(k).apply(map)
+    def get(k: K): F[Option[V]] = DMap.get(k).apply(map)
+    def put(k: K, v: V): F[Unit] = DMap.put(k, v).apply(map)
+    def putAll(vs: Map[K, V]): F[Unit] = DMap.putAll(vs).apply(map)
+    def modifyLocal(k: K, f: V => V): F[Unit] = DMap.modifyLocal(k, f).apply(map)
+    def modify(k: K, f: V => V): F[Unit] = DMap.modify(k, f).apply(map)
+    def reader[A](k: K, f: V => A) = DMap.reader(k, f).apply(map)
+    def readerLocal[A](k: K, f: V => A): F[A] = DMap.readerLocal(k, f).apply(map)
+    def mapReduce[B](b: B)(f: (K, V) => B, g: (B, B) => B): F[B] = DMap.mapReduce(b, f, g).apply(map)
+    def project[B](f: (K, V) => B): F[Seq[B]] = DMap.project(f).apply(map)
+    def collect[B](pf: PartialFunction[(K, V), B]): F[Seq[B]] = DMap.collect(pf).apply(map)
+    def findKeys(f: (K, V) => Boolean): F[Set[K]] = DMap.findKeys(f).apply(map)
+    def removeAll: F[Unit] = DMap.removeAll.apply(map)
+    def remove(k: K): F[Unit] = DMap.remove(k).apply(map)
+
+    def listen: Stream[F, DMapKVEvent[K, V]] = DMap.listen.apply(map)
+    def listenKeys: Stream[F, DMapKEvent[K]] = DMap.listenKeys.apply(map)
     
     override def toString: String = s"${map.getName}(${map.getServiceName}, ${map.getLocalMapStats})"
   }
@@ -155,7 +166,19 @@ object DMapKVEvent {
   case class Evict[K, V](k: K, v: V) extends DMapKVEvent[K, V]
 }
 
-trait DistMap[F[_], K, V] extends Serializable {
+sealed trait DMapKEvent[+K]
+
+object DMapKEvent {
+  case class Cleared(n: Long) extends DMapKEvent[Nothing]
+  case class Evicted(n: Long) extends DMapKEvent[Nothing]
+  case class Add[K](k: K) extends DMapKEvent[K]
+  case class Remove[K](k: K) extends DMapKEvent[K]
+  case class Update[K](k: K) extends DMapKEvent[K]
+  case class Merged[K](k: K) extends DMapKEvent[K]
+  case class Evict[K](k: K) extends DMapKEvent[K]
+}
+
+trait DMap[F[_], K, V] extends Serializable {
 
   def containsKey(k: K): F[Boolean]
   def get(k: K): F[Option[V]]
@@ -169,8 +192,10 @@ trait DistMap[F[_], K, V] extends Serializable {
   def project[B](f: (K, V) => B): F[Seq[B]]
   def collect[B](pf: PartialFunction[(K, V), B]): F[Seq[B]]
   def findKeys(f: (K, V) => Boolean): F[Set[K]]
+  def remove(k: K): F[Unit]
   def removeAll: F[Unit]
   def listen: Stream[F, DMapKVEvent[K, V]]
+  def listenKeys: Stream[F, DMapKEvent[K]]
 
   def fold(implicit M: Monoid[V]): F[V] = mapReduce(M.empty)((_, v) => v, M.combine)
 }
