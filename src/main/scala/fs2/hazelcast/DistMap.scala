@@ -39,27 +39,32 @@ object DistMap {
   def put[F[_] : Async, K, V](k: K, v: V): ReaderT[F, hz.IMap[K, V], Unit] =
     ReaderT { map => runEffect(map.putAsync(k, v)) }
 
-  def lock[F[_], K, V](k: K)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Unit] =
-    ReaderT { map => F.delay(map.lock(k)) }
-
-  def unlock[F[_], K, V](k: K)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Unit] =
-    ReaderT { map => F.delay(map.unlock(k)) }
 
   def modify[F[_], K, V](k: K, f: V => V)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Unit] =
     ReaderT { map => runEffect { map.submitToKey(k, new WriteProcessor[K, V]((_, v) => f(v))) } }
 
+  def lock[F[_], K, V, A](k: K)(fa: ReaderT[F, hz.IMap[K, V], A])(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], A] = ReaderT { map =>
+    val run = fa.apply(map)
+    Stream
+      .bracket(F.delay(map.lock(k)))(_ => Stream.eval(run), _ => F.delay(map.unlock(k)))
+      .runLast.map(_.get)
+  }
+
   def modifyLocal[F[_], K, V](k: K, f: V => V)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Unit] =
-    ReaderT[F, hz.IMap[K, V], Unit] { map =>
-      Stream.bracket[F, Unit, Unit](lock(k).apply(map))(_ =>
-        Stream.eval {
-          for {
-            v <- get(k).apply(map)
-            _ <- if(v.isDefined) put(k, f(v.get)).apply(map) else F.fail(new IllegalArgumentException(s"cannot modify non-existent value with key $k"))
-          } yield ()
-        },
-        _ => unlock(k).apply(map)
-      ).run
+    lock(k) {
+      ReaderT { map =>
+        F.delay {
+          Option(map.get(k)) match {
+            case Some(a) =>
+              map.put(k, f(a))
+              F.pure(())
+            case None =>
+              F.fail[Unit](new IllegalArgumentException(s"key $k is not present, cannot modify"))
+          }
+        }.flatMap(identity)
+      }
     }
+
 
   def mapReduce[F[_], K, V, B](b: B, f: (K, V) => B, g: (B, B) => B)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], B] =
     ReaderT { map =>
@@ -101,6 +106,19 @@ object DistMap {
       F.delay { map.destroy() }
     }
 
+
+  def listen[F[_], K, V](implicit F: Async[F]): ReaderT[Stream[F, ?], hz.IMap[K, V], DMapKVEvent[K, V]] =
+    ReaderT { map =>
+      for {
+        queue <- Stream.eval(async.unboundedQueue[F, DMapKVEvent[K, V]])
+        values <- Stream.bracket[F, String, DMapKVEvent[K, V]](
+          F.delay {
+            map.addEntryListener(new EntryKVHandler[K, V](event => queue.enqueue1(event).unsafeRunAsync(_ => ())), true)
+          }
+        )(_ => queue.dequeue, id => F.delay(map.removeEntryListener(id)).map(_ => ()))
+      } yield values
+    }
+
   def apply[F[_] : Async, K, V](map: hz.IMap[K, V]): DistMap[F, K, V] = new DistMap[F, K, V] {
 
     def containsKey(k: K): F[Boolean] = DistMap.containsKey(k).apply(map)
@@ -117,11 +135,25 @@ object DistMap {
     def findKeys(f: (K, V) => Boolean): F[Set[K]] = DistMap.findKeys(f).apply(map)
     def removeAll: F[Unit] = DistMap.removeAll.apply(map)
 
+    def listen: Stream[F, DMapKVEvent[K, V]] = DistMap.listen.apply(map)
+    
     override def toString: String = s"${map.getName}(${map.getServiceName}, ${map.getLocalMapStats})"
   }
 }
 
 import cats._
+
+sealed trait DMapKVEvent[+K, +V]
+
+object DMapKVEvent {
+  case class Cleared(n: Long) extends DMapKVEvent[Nothing, Nothing]
+  case class Evicted(n: Long) extends DMapKVEvent[Nothing, Nothing]
+  case class Add[K, V](k: K, v: V) extends DMapKVEvent[K, V]
+  case class Remove[K, V](k: K, v: V) extends DMapKVEvent[K, V]
+  case class Update[K, V](k: K, prev: V, next: V) extends DMapKVEvent[K, V]
+  case class Merged[K, V](k: K, prev: V, merge: V, v: V) extends DMapKVEvent[K, V]
+  case class Evict[K, V](k: K, v: V) extends DMapKVEvent[K, V]
+}
 
 trait DistMap[F[_], K, V] extends Serializable {
 
@@ -138,6 +170,7 @@ trait DistMap[F[_], K, V] extends Serializable {
   def collect[B](pf: PartialFunction[(K, V), B]): F[Seq[B]]
   def findKeys(f: (K, V) => Boolean): F[Set[K]]
   def removeAll: F[Unit]
+  def listen: Stream[F, DMapKVEvent[K, V]]
 
   def fold(implicit M: Monoid[V]): F[V] = mapReduce(M.empty)((_, v) => v, M.combine)
 }

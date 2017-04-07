@@ -3,6 +3,7 @@ package hazelcast
 
 import com.hazelcast.{core => hz}
 import com.hazelcast.map._
+import com.hazelcast.map.listener._
 import com.hazelcast.aggregation._
 import com.hazelcast.projection._
 import com.hazelcast.query._
@@ -77,4 +78,38 @@ private[hazelcast] final class EntryPredicate[K, V](f: (K, V) => Boolean) extend
 
 private[hazelcast] final class ProjectionFunction[A, B](f: A => B) extends Projection[A, B] {
   def transform(a: A): B = f(a)
+}
+
+private[hazelcast] final class EntryKVHandler[K, V](cb: DMapKVEvent[K, V] => Unit)
+    extends MapListener
+    with MapClearedListener
+    with MapEvictedListener
+    with EntryAddedListener[K, V]
+    with EntryEvictedListener[K, V]
+    with EntryRemovedListener[K, V]
+    with EntryMergedListener[K, V]
+    with EntryUpdatedListener[K, V]
+{
+
+
+  override def entryAdded(entry: hz.EntryEvent[K, V]): Unit = 
+    cb(DMapKVEvent.Add(entry.getKey, entry.getValue))
+
+  override def entryRemoved(entry: hz.EntryEvent[K, V]): Unit =
+    cb(DMapKVEvent.Remove(entry.getKey, entry.getOldValue))
+
+  override def entryUpdated(entry: hz.EntryEvent[K, V]): Unit =
+    cb(DMapKVEvent.Update(entry.getKey, entry.getOldValue, entry.getValue))
+
+  def entryMerged(entry: hz.EntryEvent[K, V]): Unit =
+    cb(DMapKVEvent.Merged(entry.getKey, entry.getOldValue, entry.getMergingValue, entry.getValue))
+
+  override def entryEvicted(entry: hz.EntryEvent[K, V]): Unit =
+    cb(DMapKVEvent.Evict(entry.getKey, entry.getValue))
+
+  override def mapCleared(event: hz.MapEvent): Unit =
+    cb(DMapKVEvent.Cleared(event.getNumberOfEntriesAffected))
+
+  override def mapEvicted(event: hz.MapEvent): Unit =
+    cb(DMapKVEvent.Evicted(event.getNumberOfEntriesAffected))
 }
