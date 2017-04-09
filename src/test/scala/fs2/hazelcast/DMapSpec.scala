@@ -156,6 +156,21 @@ final class DMapSpec(@transient hazelcast: hz.HazelcastInstance) extends FlatSpe
     val r = remove.mergeDrainL(map.listenKeys).take(1).runLog
     r.unsafeRun should be(Vector(DMapKEvent.Remove(0)))
   }
+
+  it should "run atomic updates" in {
+    import DMapAtomic._
+    val r = map.atomic {
+      for {
+        _ <- lock(0)
+        _ <- lock(1)
+        _ <- put(0, "foo")
+        _ <- put(1, "bar")
+        _ <- unlock(0)
+        a <- get(0)
+      } yield a
+    }
+    r.unsafeRun should be("foo")
+  }
 }
 
 
