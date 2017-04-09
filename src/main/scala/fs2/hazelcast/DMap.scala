@@ -2,9 +2,14 @@ package fs2
 package hazelcast
 
 import fs2._
-import fs2.util._
+import fs2.util.{~> => _, Free => _, _}
 import fs2.util.syntax._
+
+import fs2.interop.cats._
+
+import cats._
 import cats.data._
+import cats.free._
 
 import com.hazelcast.{core => hz}
 import com.hazelcast.map.listener._
@@ -60,8 +65,7 @@ object DMap {
         F.delay {
           Option(map.get(k)) match {
             case Some(a) =>
-              map.put(k, f(a))
-              F.pure(())
+              F.delay[Unit](map.put(k, f(a)))
             case None =>
               F.fail[Unit](new IllegalArgumentException(s"key $k is not present, cannot modify"))
           }
@@ -128,31 +132,44 @@ object DMap {
   def listenKeys[F[_], K, V](implicit F: Async[F]): ReaderT[Stream[F, ?], hz.IMap[K, V], DMapKEvent[K]] =
     _listen(queue => new EntryKHandler[K, V](event => queue.enqueue1(event).unsafeRunAsync(_ => ())), false)
 
-  def apply[F[_] : Async, K, V](map: hz.IMap[K, V]): DMap[F, K, V] = new DMap[F, K, V] {
+  def apply[F[_], K, V](map: hz.IMap[K, V])(implicit F: Async[F]): DMap[F, K, V] = {
 
-    def containsKey(k: K): F[Boolean] = DMap.containsKey(k).apply(map)
-    def get(k: K): F[Option[V]] = DMap.get(k).apply(map)
-    def put(k: K, v: V): F[Unit] = DMap.put(k, v).apply(map)
-    def putAll(vs: Map[K, V]): F[Unit] = DMap.putAll(vs).apply(map)
-    def modifyLocal(k: K, f: V => V): F[Unit] = DMap.modifyLocal(k, f).apply(map)
-    def modify(k: K, f: V => V): F[Unit] = DMap.modify(k, f).apply(map)
-    def reader[A](k: K, f: V => A) = DMap.reader(k, f).apply(map)
-    def readerLocal[A](k: K, f: V => A): F[A] = DMap.readerLocal(k, f).apply(map)
-    def mapReduce[B](b: B)(f: (K, V) => B, g: (B, B) => B): F[B] = DMap.mapReduce(b, f, g).apply(map)
-    def project[B](f: (K, V) => B): F[Seq[B]] = DMap.project(f).apply(map)
-    def collect[B](pf: PartialFunction[(K, V), B]): F[Seq[B]] = DMap.collect(pf).apply(map)
-    def findKeys(f: (K, V) => Boolean): F[Set[K]] = DMap.findKeys(f).apply(map)
-    def removeAll: F[Unit] = DMap.removeAll.apply(map)
-    def remove(k: K): F[Unit] = DMap.remove(k).apply(map)
+    val interpreter = DMapAtomic.interpreter[F, K, V]
 
-    def listen: Stream[F, DMapKVEvent[K, V]] = DMap.listen.apply(map)
-    def listenKeys: Stream[F, DMapKEvent[K]] = DMap.listenKeys.apply(map)
+    new DMap[F, K, V] {
+
+      def containsKey(k: K): F[Boolean] = DMap.containsKey(k).apply(map)
+      def get(k: K): F[Option[V]] = DMap.get(k).apply(map)
+      def put(k: K, v: V): F[Unit] = DMap.put(k, v).apply(map)
+      def putAll(vs: Map[K, V]): F[Unit] = DMap.putAll(vs).apply(map)
+      def modifyLocal(k: K, f: V => V): F[Unit] = DMap.modifyLocal(k, f).apply(map)
+      def modify(k: K, f: V => V): F[Unit] = DMap.modify(k, f).apply(map)
+      def reader[A](k: K, f: V => A) = DMap.reader(k, f).apply(map)
+      def readerLocal[A](k: K, f: V => A): F[A] = DMap.readerLocal(k, f).apply(map)
+
+      def mapReduce[B](b: B)(f: (K, V) => B, g: (B, B) => B): F[B] = DMap.mapReduce(b, f, g).apply(map)
+      def project[B](f: (K, V) => B): F[Seq[B]] = DMap.project(f).apply(map)
+      def collect[B](pf: PartialFunction[(K, V), B]): F[Seq[B]] = DMap.collect(pf).apply(map)
+      def findKeys(f: (K, V) => Boolean): F[Set[K]] = DMap.findKeys(f).apply(map)
+      def removeAll: F[Unit] = DMap.removeAll.apply(map)
+      def remove(k: K): F[Unit] = DMap.remove(k).apply(map)
+
+      def atomic[A](prg: DMapAtomic.PRG[K, V, A]): F[A] = {
+        prg.foldMap(interpreter).apply(map).run(Set.empty).flatMap {
+          case (locks, a) => F.delay {
+            locks.map(map.unlock)
+            a
+          }
+        }
+      }
+
+      def listen: Stream[F, DMapKVEvent[K, V]] = DMap.listen.apply(map)
+      def listenKeys: Stream[F, DMapKEvent[K]] = DMap.listenKeys.apply(map)
     
-    override def toString: String = s"${map.getName}(${map.getServiceName}, ${map.getLocalMapStats})"
+      override def toString: String = s"${map.getName}(${map.getServiceName}, ${map.getLocalMapStats})"
+    }
   }
 }
-
-import cats._
 
 sealed trait DMapKVEvent[+K, +V]
 
@@ -178,6 +195,48 @@ object DMapKEvent {
   case class Evict[K](k: K) extends DMapKEvent[K]
 }
 
+sealed trait DMapAtomic[+K, +V, A]
+
+
+object DMapAtomic {
+
+
+  type PRG[K, V, A] = Free[DMapAtomic[K, V, ?], A]
+
+  case class Get[K, V](k: K) extends DMapAtomic[K, V, V]
+  case class Put[K, V](k: K, v: V) extends DMapAtomic[K, V, Unit]
+  case class Lock[K](k: K) extends DMapAtomic[K, Nothing, Unit]
+  case class Unlock[K](k: K) extends DMapAtomic[K, Nothing, Unit]
+
+  private def liftF[K, V, A](dsl: DMapAtomic[K, V, A]): PRG[K, V, A] = Free.liftF[DMapAtomic[K, V, ?], A](dsl)
+
+  def get[K, V](k: K): PRG[K, V, V] = liftF(Get(k))
+  def put[K, V](k: K, v: V): PRG[K, V, Unit] = liftF(Put(k, v))
+  def lock[K, V](k: K): PRG[K, V, Unit] = liftF(Lock(k))
+  def unlock[K, V](k: K): PRG[K, V, Unit] = liftF(Unlock(k))
+
+  def interpreter[F[_], K, V](implicit F: Async[F]): DMapAtomic[K, V, ?] ~> ReaderT[StateT[F, Set[K], ?], hz.IMap[K, V], ?] =
+    new (DMapAtomic[K, V, ?] ~> ReaderT[StateT[F, Set[K], ?], hz.IMap[K, V], ?]) {
+      def apply[A](fa: DMapAtomic[K, V, A]): ReaderT[StateT[F, Set[K], ?], hz.IMap[K, V], A] = fa match {
+        case Get(k) => ReaderT { map =>
+          StateT.lift(F.delay(map.get(k).asInstanceOf[A]))
+        }
+        case Put(k, v) => ReaderT { map =>
+          StateT.lift(F.delay(map.set(k, v)))
+        }
+        case Lock(k) => ReaderT { map =>
+          StateT { locks => F.delay((locks + k) -> map.lock(k)) }
+        }
+        case Unlock(k) => ReaderT { map =>
+          StateT { locks => F.delay((locks - k) -> map.lock(k)) }
+        }
+      }
+    }
+
+
+}
+
+
 trait DMap[F[_], K, V] extends Serializable {
 
   def containsKey(k: K): F[Boolean]
@@ -196,6 +255,8 @@ trait DMap[F[_], K, V] extends Serializable {
   def removeAll: F[Unit]
   def listen: Stream[F, DMapKVEvent[K, V]]
   def listenKeys: Stream[F, DMapKEvent[K]]
+
+  def atomic[A](prg: DMapAtomic.PRG[K, V, A]): F[A]
 
   def fold(implicit M: Monoid[V]): F[V] = mapReduce(M.empty)((_, v) => v, M.combine)
 }

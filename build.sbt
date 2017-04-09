@@ -36,7 +36,7 @@ lazy val commonSettings = Seq(
     "org.typelevel" %% "cats-free" % catsVersion,
     "com.hazelcast" % "hazelcast" % "3.8",
     "co.fs2" %% "fs2-core" % "0.9.4",
-
+    "co.fs2" %% "fs2-cats" % "0.3.0",
     "org.scalatest" %% "scalatest" % "3.0.1" % "test",
     "org.scalacheck" %% "scalacheck" % "1.13.4" % "test"
   )
