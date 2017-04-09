@@ -48,6 +48,9 @@ object DMap {
   def put[F[_] : Async, K, V](k: K, v: V): ReaderT[F, hz.IMap[K, V], Unit] =
     ReaderT { map => runEffect(map.putAsync(k, v)) }
 
+  def set[F[_] : Async, K, V](k: K, v: V): ReaderT[F, hz.IMap[K, V], Unit] =
+    ReaderT { map => runEffect(map.setAsync(k, v)) }
+
 
   def modify[F[_], K, V](k: K, f: V => V)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Unit] =
     ReaderT { map => runEffect { map.submitToKey(k, new WriteProcessor[K, V]((_, v) => f(v))) } }
@@ -129,6 +132,11 @@ object DMap {
   def listen[F[_], K, V](implicit F: Async[F]): ReaderT[Stream[F, ?], hz.IMap[K, V], DMapKVEvent[K, V]] =
     _listen(queue => new EntryKVHandler[K, V](event => queue.enqueue1(event).unsafeRunAsync(_ => ())), true)
 
+  def listenCollect[F[_] : Async, K, V, A](pf: PartialFunction[DMapKVEvent[K, V], A]): ReaderT[Stream[F, ?], hz.IMap[K, V], A] =
+    _listen[F, K, V, A](queue => new EntryKVHandler[K, V](event => pf.lift(event).map { a =>
+        queue.enqueue1(a).unsafeRunAsync(_ => ())
+    }), true)
+
   def listenKeys[F[_], K, V](implicit F: Async[F]): ReaderT[Stream[F, ?], hz.IMap[K, V], DMapKEvent[K]] =
     _listen(queue => new EntryKHandler[K, V](event => queue.enqueue1(event).unsafeRunAsync(_ => ())), false)
 
@@ -142,6 +150,7 @@ object DMap {
       def get(k: K): F[Option[V]] = DMap.get(k).apply(map)
       def put(k: K, v: V): F[Unit] = DMap.put(k, v).apply(map)
       def putAll(vs: Map[K, V]): F[Unit] = DMap.putAll(vs).apply(map)
+      def set(k: K, v: V): F[Unit] = DMap.set(k, v).apply(map)
       def modifyLocal(k: K, f: V => V): F[Unit] = DMap.modifyLocal(k, f).apply(map)
       def modify(k: K, f: V => V): F[Unit] = DMap.modify(k, f).apply(map)
       def reader[A](k: K, f: V => A) = DMap.reader(k, f).apply(map)
@@ -164,6 +173,7 @@ object DMap {
       }
 
       def listen: Stream[F, DMapKVEvent[K, V]] = DMap.listen.apply(map)
+      def listenCollect[A](pf: PartialFunction[DMapKVEvent[K, V], A]): Stream[F, A] = DMap.listenCollect(pf).apply(map)
       def listenKeys: Stream[F, DMapKEvent[K]] = DMap.listenKeys.apply(map)
     
       override def toString: String = s"${map.getName}(${map.getServiceName}, ${map.getLocalMapStats})"
@@ -203,26 +213,36 @@ object DMapAtomic {
 
   type PRG[K, V, A] = Free[DMapAtomic[K, V, ?], A]
 
-  case class Get[K, V](k: K) extends DMapAtomic[K, V, V]
+  case class Get[K, V](k: K) extends DMapAtomic[K, V, Option[V]]
+  case class Set[K, V](k: K, v: V) extends DMapAtomic[K, V, Unit]
   case class Put[K, V](k: K, v: V) extends DMapAtomic[K, V, Unit]
   case class Lock[K](k: K) extends DMapAtomic[K, Nothing, Unit]
   case class Unlock[K](k: K) extends DMapAtomic[K, Nothing, Unit]
 
   private def liftF[K, V, A](dsl: DMapAtomic[K, V, A]): PRG[K, V, A] = Free.liftF[DMapAtomic[K, V, ?], A](dsl)
 
-  def get[K, V](k: K): PRG[K, V, V] = liftF(Get(k))
+  def get[K, V](k: K): PRG[K, V, Option[V]] = liftF(Get(k))
   def put[K, V](k: K, v: V): PRG[K, V, Unit] = liftF(Put(k, v))
+  def set[K, V](k: K, v: V): PRG[K, V, Unit] = liftF(Set(k, v))
   def lock[K, V](k: K): PRG[K, V, Unit] = liftF(Lock(k))
   def unlock[K, V](k: K): PRG[K, V, Unit] = liftF(Unlock(k))
 
-  def interpreter[F[_], K, V](implicit F: Async[F]): DMapAtomic[K, V, ?] ~> ReaderT[StateT[F, Set[K], ?], hz.IMap[K, V], ?] =
-    new (DMapAtomic[K, V, ?] ~> ReaderT[StateT[F, Set[K], ?], hz.IMap[K, V], ?]) {
-      def apply[A](fa: DMapAtomic[K, V, A]): ReaderT[StateT[F, Set[K], ?], hz.IMap[K, V], A] = fa match {
+  type AtomicRun[F[_], K, V, A] = ReaderT[StateT[F, scala.collection.Set[K], ?], hz.IMap[K, V], A]
+
+  def interpreter[F[_], K, V](implicit F: Async[F]): DMapAtomic[K, V, ?] ~> AtomicRun[F, K, V, ?] =
+    new (DMapAtomic[K, V, ?] ~> AtomicRun[F, K, V, ?]) {
+      def apply[A](fa: DMapAtomic[K, V, A]): AtomicRun[F, K, V, A] = fa match {
         case Get(k) => ReaderT { map =>
-          StateT.lift(F.delay(map.get(k).asInstanceOf[A]))
+          StateT.lift(F.delay(Option(map.get(k)).asInstanceOf[A]))
+        }
+        case Set(k, v) => ReaderT { map =>
+          StateT.lift(F.delay(map.set(k, v)))
         }
         case Put(k, v) => ReaderT { map =>
-          StateT.lift(F.delay(map.set(k, v)))
+          StateT.lift(F.delay {
+            map.put(k, v)
+            ()
+          })
         }
         case Lock(k) => ReaderT { map =>
           StateT { locks => F.delay((locks + k) -> map.lock(k)) }
@@ -243,6 +263,7 @@ trait DMap[F[_], K, V] extends Serializable {
   def get(k: K): F[Option[V]]
   def put(k: K, v: V): F[Unit]
   def putAll(vs: Map[K, V]): F[Unit]
+  def set(k: K, v: V): F[Unit]
   def modifyLocal(k: K, f: V => V): F[Unit]
   def modify(k: K, f: V => V): F[Unit]
   def reader[A](k: K, f: V => A): F[A]
@@ -254,6 +275,7 @@ trait DMap[F[_], K, V] extends Serializable {
   def remove(k: K): F[Unit]
   def removeAll: F[Unit]
   def listen: Stream[F, DMapKVEvent[K, V]]
+  def listenCollect[A](pf: PartialFunction[DMapKVEvent[K, V], A]): Stream[F, A]
   def listenKeys: Stream[F, DMapKEvent[K]]
 
   def atomic[A](prg: DMapAtomic.PRG[K, V, A]): F[A]
