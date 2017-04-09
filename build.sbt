@@ -20,7 +20,7 @@ lazy val commonResolvers = Seq(
 
 lazy val buildSettings = Seq(
   licenses += ("Apache-2.0", url("https://www.apache.org/licenses/LICENSE-2.0.html")),
-  organization := "fs2",
+  organization := "com.github.yilinwei",
   scalaOrganization := "org.typelevel",
   scalaVersion := "2.12.1",
   name := "fs2-hazelcast",
