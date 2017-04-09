@@ -120,6 +120,7 @@ final class DMapSpec(@transient hazelcast: hz.HazelcastInstance) extends FlatSpe
   }
 
   it should "listen to kv updates" in {
+    map.put(1, "bar").unsafeRun
     val update = fs2.time.every(300 milliseconds).flatMap(_ => Stream.eval(map.put(1, "foo")))
     val r = update.mergeDrainL(map.listen).take(1).runLog
     r.unsafeRun should be(Vector(DMapKVEvent.Update(1, "foo", "foo")))
@@ -139,6 +140,7 @@ final class DMapSpec(@transient hazelcast: hz.HazelcastInstance) extends FlatSpe
   }
 
   it should "listen to k updates" in {
+    map.put(1, "bar").unsafeRun
     val update = fs2.time.every(300 milliseconds).flatMap(_ => Stream.eval(map.put(1, "bar")))
     val r = update.mergeDrainL(map.listenKeys).take(1).runLog
     r.unsafeRun should be(Vector(DMapKEvent.Update(1)))
