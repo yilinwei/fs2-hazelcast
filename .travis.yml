@@ -14,6 +14,8 @@ branches:
   - master
 
 script:
+  - git config --global user.email "yilin.wei10@gmail.com"
+  - git config --global user.name "yilinwei"
   - |
     if [ $TRAVIS_PULL_REQUEST = 'false' ]; then
       sbt ++$TRAVIS_SCALA_VERSION 'release with-defaults'
