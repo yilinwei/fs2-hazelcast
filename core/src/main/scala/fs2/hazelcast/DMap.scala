@@ -77,35 +77,34 @@ object DMap {
     }
 
 
-  def mapReduce[F[_], K, V, B](b: B, f: (K, V) => B, g: (B, B) => B)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], B] =
+  def mapReduce[F[_], K, V, B](b: B, f: (K, V) => B, g: (B, B) => B)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], B] = {
+    val mapReduce = new MapReduce[java.util.Map.Entry[K, V], B](b, entry => f(entry.getKey, entry.getValue), g)
     ReaderT { map =>
       F.delay {
-        map.aggregate(new MapReduce[java.util.Map.Entry[K, V], B](b, entry => f(entry.getKey, entry.getValue), g))
+        map.aggregate(mapReduce)
       }
     }
+  }
 
-  def project[F[_], K, V, B](f: (K, V) => B)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Seq[B]] =
-    ReaderT { map =>
-      F.delay {
-        map
-          .project(new ProjectionFunction[java.util.Map.Entry[K, V], B](entry => f(entry.getKey, entry.getValue)))
-          .asScala
-          .toSeq
-      }
-    }
 
-  def collect[F[_], K, V, B](pf: PartialFunction[(K, V), B])(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Seq[B]] =
+  def project[F[_], K, V, B](f: (K, V) => B)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Seq[B]] = {
+    val projection = new ProjectionFunction[java.util.Map.Entry[K, V], B](entry => f(entry.getKey, entry.getValue))
     ReaderT { map =>
       F.delay {
-        map
-          .project(
-            new ProjectionFunction[java.util.Map.Entry[K, V], B](entry => pf(entry.getKey -> entry.getValue)),
-            new EntryPredicate[K, V]((k, v) => pf.isDefinedAt(k -> v))
-          )
-          .asScala
-          .toSeq
+        map.project(projection).asScala.toSeq
       }
     }
+  }
+
+  def collect[F[_], K, V, B](pf: PartialFunction[(K, V), B])(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Seq[B]] = {
+    val projection = new ProjectionFunction[java.util.Map.Entry[K, V], B](entry => pf(entry.getKey -> entry.getValue))
+    val predicate = new EntryPredicate[K, V]((k, v) => pf.isDefinedAt(k -> v))
+    ReaderT { map =>
+      F.delay {
+        map.project(projection, predicate).asScala.toSeq
+      }
+    }
+  }
 
   def findKeys[F[_], K, V](f: (K, V) => Boolean)(implicit F: Async[F]): ReaderT[F, hz.IMap[K, V], Set[K]] =
     ReaderT { map =>
