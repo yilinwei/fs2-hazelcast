@@ -23,7 +23,6 @@ lazy val buildSettings = Seq(
   organization := "com.github.yilinwei",
   scalaOrganization := "org.typelevel",
   scalaVersion := "2.12.1",
-  name := "fs2-hazelcast",
   version := "0.1.0-SNAPSHOT"
 )
 
@@ -42,7 +41,10 @@ lazy val commonSettings = Seq(
   )
 ) ++ compilerSettings
 
-lazy val root = (project in file(".")).settings(
+lazy val core = (project in file("core")).settings(
+  name := "fs2-hazelcast-core",
   buildSettings,
   commonSettings
 )
+
+lazy val root = (project in file(".")).aggregate(core)
