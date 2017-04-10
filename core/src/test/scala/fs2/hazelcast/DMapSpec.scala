@@ -16,7 +16,7 @@ import fs2.interop.cats._
 import scala.concurrent.duration._
 
 @SerialVersionUID(20170704)
-final class DMapSpec(@transient hazelcast: hz.HazelcastInstance) extends FlatSpec with Matchers with Serializable with BeforeAndAfterEach {
+final class DMapSpec(@transient val hazelcast: hz.HazelcastInstance) extends FlatSpec with Matchers with Serializable with BeforeAndAfterEach {
 
   @transient var map: DMap[Task, Int, String] = _
 
@@ -41,18 +41,12 @@ final class DMapSpec(@transient hazelcast: hz.HazelcastInstance) extends FlatSpe
   }
 
   it should "find keys" in {
-    val r = for {
-      _ <- map.putAll(Map(1 -> "foo", 2 -> "bar"))
-      result <- map.findKeys((i, _) => i < 2)
-    } yield result
+    val r = map.putAll(Map(1 -> "foo", 2 -> "bar")) >> map.findKeys((i, _) => i < 2)
     r.unsafeRun should contain (1)
   }
 
   it should "get a null value as a None" in {
-    val r = for {
-      a <- map.get(1)
-    } yield a
-    r.unsafeRun should be(None)
+    map.get(1).unsafeRun should be(None)
   }
 
   it should "modify an existing value" in {

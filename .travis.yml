@@ -1,14 +1,39 @@
 language: scala
 
 scala:
- - 2.12.1
- - 2.11.8
- 
+- 2.12.1
+
 jdk:
-  - oraclejdk8
+- oraclejdk8
+
+before_script:
+  - "if [ $TRAVIS_PULL_REQUEST = 'false' ]; then git checkout -qf $TRAVIS_BRANCH; fi"
+
+branches:
+  only:
+  - master
 
 script:
-  - sbt clean compile coverage test coverageReport
+  - |
+    if [ $TRAVIS_PULL_REQUEST = 'false' ]; then
+      sbt ++$TRAVIS_SCALA_VERSION 'release with-defaults'
+    else
+      sbt ++$TRAVIS_SCALA_VERSION test
+    fi
+  - find $HOME/.sbt -name "*.lock" | xargs rm
+  - find $HOME/.ivy2 -name "ivydata-*.properties" | xargs rm
 
 after_success:
-- bash <(curl -s https://codecov.io/bash)
+  - find $HOME/.sbt -name "*.lock" | xargs rm
+  - find $HOME/.ivy2 -name "ivydata-*.properties" | xargs rm
+  - bash <(curl -s https://codecov.io/bash)
+
+cache:
+  directories:
+    - $HOME/.ivy2/cache
+    - $HOME/.sbt/boot/scala-$TRAVIS_SCALA_VERSION
+
+env:
+  global:
+  - secure: UhS1RIYg8Vjug5nP6u76Lgz26EiV1mljr5fLu98T8JYjpqsZNlz59DfVvaihBMkbeOvcY3pLFAsWs05VltYrdUt1ciVa2f+h6EDQfEcWrrokB+ladZvscqJpN14QqLf7CXuSKyqsej254HuE4vTM6lA8fqIhE/1CJicIDrDTfV8oHaKxO0oo0IdHmAWz/M8I12OncxRN8A7MUweZikh46Q2zC3O1yOTGrd7RLzsvw3snXtwI+f5AfFYfMbgEWNVe5uWnJ6rQNikCLvrXHVS3cHwB6PXQe4A169Z4mleR6axjWr9C26wBtdZWi2Mt6qpC+jkF9Ka3tSCctf0hWeeDUca3aGkEDvCG6iht2UufqisHd1YOYepHZdjn0fiQyWzVSg9iOLDZ1XzQIMtSDu3rMPgD2kOVkOdnolkctviYPn1I8yDuxIGQn+8w0aRLza0oGgmO/UA8ZfWuafoPEG/xBnqYU7qqV3Z/c8Vr87UPTIiy0TTpvMlCbQsb9K5vD0fcIXnSj57sYK1E8cK0PNyWuFvfbQZmDZGeaSNUGI7O9/d6fL+97H6BQtl8Le5TpWy2mML98U3ipV6miLe6oZtGHFDG1KSKdLiEIPb1CAO0Zdqg+mmTLW0IK9fdYSpHN0wUh5RujkmcgsvMvj281EDE/Y4k83OR618JJwCphnQT8HE=
+  - secure: Vzow5mL4Hec6+/MCCEN/vpRdQMPYBEQeF8woZpINBM5qe/90FOTnrH0kPfpA4uRYp+Ag0BlcizsbsDjFY2is6Wl1uQh2QMWylW47vZJ00Rxvq/YO3CbPn61CW0W72KfxQHhF38fR/WsGVx/eXrkPexc2w67M2I9Uctk4oQkQ1WrIrKyPVXQBCQuR4Q7IU9xyX6RLebclFkmJuLOFxQ88rl69dFskIBkYmhHltsE/1Kb97K4geB5xV2WmoCKTya+ucefGwMDRRoG4JcIKleTuF/QLgdbX685dwayVrIY1utyMhyhzMSdGToWa1q1uqczyuPyXe9fenXEYmG+XhR/XNxMDcazMjEQaSG99tA49/93qi202UnvIEr5OJVyF5SnQIcEBkhzwve2sODhs1MxQ0YADM87wBrgEt/8LdOD1xsTu3/zcTrl6ZRB13mQIjQ3uO6oD28UavSD7IOyZcgwQt+BkBHNaCf7phAbT4Mh0SeM7JFAu+NDfKPGpo4aZjtO8hhCd9ZuPOwdn7atyh7dXV9G72Iu5YX4Psg44phCCqAUzVtaX7mgtWO0rJwPGQvBz6OUMLmhkB8j0lg4DhS/x9sSFBzcrnQDWKK+kD/IIXjWqWVaJWROlt+FJ+vWzoaTeY1+fQADWD7Vnpgpb3uAAlA64o3lEX320ztQ1lvhgNHI=
