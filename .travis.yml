@@ -2,6 +2,7 @@ language: scala
 
 scala:
 - 2.12.1
+- 2.11.8
 
 jdk:
 - oraclejdk8
@@ -14,6 +15,8 @@ branches:
   - master
 
 script:
+  - git config --global user.email "yilin.wei10@gmail.com"
+  - git config --global user.name "yilinwei"
   - |
     if [ $TRAVIS_PULL_REQUEST = 'false' ]; then
       sbt ++$TRAVIS_SCALA_VERSION 'release with-defaults'
