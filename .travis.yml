@@ -21,7 +21,7 @@ script:
     if [ $TRAVIS_PULL_REQUEST = 'false' ]; then
       sbt ++$TRAVIS_SCALA_VERSION core/publish
     else
-      sbt ++$TRAVIS_SCALA_VERSION test
+      sbt ++$TRAVIS_SCALA_VERSION test coverageReport
     fi
   - find $HOME/.sbt -name "*.lock" | xargs rm
   - find $HOME/.ivy2 -name "ivydata-*.properties" | xargs rm
@@ -29,7 +29,7 @@ script:
 after_success:
   - find $HOME/.sbt -name "*.lock" | xargs rm
   - find $HOME/.ivy2 -name "ivydata-*.properties" | xargs rm
-  - bash <(curl -s https://codecov.io/bash)
+  - bash <(curl -s https://codecov.io/bash) -r $TRAVIS_REPO_SLUG
 
 cache:
   directories:
